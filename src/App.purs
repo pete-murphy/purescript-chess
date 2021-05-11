@@ -1,27 +1,23 @@
 module App where
 
 import Prelude
-
-import Data.Maybe (fromMaybe)
-import Effect.Class.Console (log)
-import Effect.Timer (clearTimeout, setTimeout)
+import Data.Foldable as Traversable
 import React.Basic.DOM as R
-import React.Basic.DOM.Events (targetValue)
-import React.Basic.Events (handler)
-import React.Basic.Hooks (Component, component, useState', (/\), useEffect)
-import React.Basic.Hooks as React
+import React.Basic.DOM.Events as DOM.Events
+import React.Basic.Events as Events
+import React.Basic.Hooks (Component, (/\))
+import React.Basic.Hooks as Hooks
 
 mkApp :: Component Unit
 mkApp = do
-  component "App" \_ -> React.do
-    text /\ setText <- useState' ""
-    useEffect text do
-      timeoutId <- setTimeout 1000 (log text)
-      pure (clearTimeout timeoutId)
-    pure (
-      R.div_ [
-        R.input {
-          onChange: handler targetValue \t -> setText (fromMaybe "" t)
-        }
-      ]
-    )
+  Hooks.component "App" \_ -> Hooks.do
+    text /\ setText <- Hooks.useState' ""
+    pure do
+      R.div_
+        [ R.input
+            { onChange:
+                Events.handler
+                  DOM.Events.targetValue
+                  (Traversable.traverse_ setText)
+            }
+        ]
