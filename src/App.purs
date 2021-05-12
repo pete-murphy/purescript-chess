@@ -5,6 +5,7 @@ import Control.Monad.State as State
 import Data.Array as Array
 import Data.Bounded.Generic as Bounded.Generic
 import Data.Enum (class BoundedEnum, class Enum)
+import Data.Enum as Enum
 import Data.Enum.Generic as Enum.Generic
 import Data.Generic.Rep (class Generic)
 import Data.Lens ((<>~))
@@ -23,6 +24,7 @@ import React.Basic.DOM.Events as DOM.Events
 import React.Basic.Events as Events
 import React.Basic.Hooks (Component, JSX, (/\))
 import React.Basic.Hooks as Hooks
+import Web.DOM.Element (className)
 
 data Rank
   = R1
@@ -146,16 +148,21 @@ renderPlayerPiece { player, piece } =
 
 renderBoard :: Board -> JSX
 renderBoard =
-  R.div_
+  R.div <<< { className: "board", children: _ }
     <<< map renderRank
+    <<< Array.reverse
     <$> chunksOf 8
+    <<< Array.reverse
     <<< Map.toUnfoldable
 
 renderRank :: Array (Tuple Square (Maybe PlayerPiece)) -> JSX
 renderRank =
-  R.div_
+  R.div <<< { className: "rank", children: _ }
     <<< map \(Tuple _ piece) ->
-        R.div_ [ Maybe.maybe mempty renderPlayerPiece piece ]
+        R.div
+          { className: "square"
+          , children: [ Maybe.maybe mempty renderPlayerPiece piece ]
+          }
 
 -- | Completely unnecessary
 chunksOf :: forall a. Int -> Array a -> Array (Array a)
@@ -168,8 +175,33 @@ chunksOf n =
             | m == n -> State.modify (_ `Array.snoc` [ x ])
           _ -> State.modify (Index.ix (Array.length acc - 1) <>~ [ x ])
 
+chunksOf' :: forall a. Int -> Array a -> Array (Array a)
+chunksOf' n = go []
+  where
+  go acc [] = acc
+
+  go acc xs = go (acc <> [ Array.take n xs ]) (Array.drop n xs)
+
+initialBoard :: Board
+initialBoard = Map.fromFoldable (allSquares `Array.zip` allPieces)
+  where
+  allSquares = do
+    rank <- bottom `Enum.enumFromTo` top
+    file <- bottom `Enum.enumFromTo` top
+    pure (Square { rank, file })
+
+  allPieces =
+    Array.concat do
+      [ Just <<< { player: White, piece: _ } <$> backRank
+      , Just <<< { player: White, piece: _ } <$> Array.replicate 8 Pawn
+      , Array.replicate 32 Nothing
+      , Just <<< { player: Black, piece: _ } <$> Array.replicate 8 Pawn
+      , Just <<< { player: Black, piece: _ } <$> backRank
+      ]
+
+  backRank = [ Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook ]
+
 mkApp :: Component Unit
 mkApp = do
   Hooks.component "App" \_ -> Hooks.do
-    pure do
-      R.h1_ [ R.text "Hello" ]
+    pure (renderBoard initialBoard)

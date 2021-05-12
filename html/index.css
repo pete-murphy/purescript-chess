@@ -1,0 +1,34 @@
+:root {
+  font-size: 80px;
+  --square-size: 0.8rem;
+}
+
+.board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--square-size);
+  grid-auto-rows: var(--square-size);
+}
+
+.square {
+  display: flex;
+  place-content: center;
+  place-items: center;
+  height: var(--square-size);
+}
+
+.rank > .square {
+  background-color: lightgray;
+}
+
+.rank:nth-of-type(odd) > .square:nth-of-type(odd) {
+  background-color: darkgray;
+}
+
+.rank:nth-of-type(even) > .square:nth-of-type(even) {
+  background-color: darkgray;
+}
+
+.white {
+  color: white;
+}
