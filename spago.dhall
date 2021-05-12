@@ -10,6 +10,7 @@ You can edit this file as you like.
   , "js-timers"
   , "maybe"
   , "prelude"
+  , "profunctor-lenses"
   , "psci-support"
   , "react-basic"
   , "react-basic-dom"
