@@ -1,7 +1,6 @@
 module Main where
 
 import Prelude
-
 import App (mkApp)
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
@@ -17,9 +16,7 @@ main = do
   document <- HTML.window >>= Window.document
   container <- NonElementParentNode.getElementById "root" (HTMLDocument.toNonElementParentNode document)
   case container of
-    Nothing -> Exception.throw "Root element not found." 
-    Just c -> do
+    Nothing -> Exception.throw "Root element not found."
+    Just foundContainer -> do
       app <- mkApp
-      DOM.render (app unit) c
-    
-  
+      DOM.render (app unit) foundContainer

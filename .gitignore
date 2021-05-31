@@ -11,3 +11,4 @@
 /.cache/
 /dist/
 /.direnv/
+/.parcel-cache/

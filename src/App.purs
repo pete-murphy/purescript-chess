@@ -1,30 +1,35 @@
 module App where
 
 import Prelude
-import Control.Monad.State as State
+import Control.Monad.Reader (ReaderT(..))
+import Control.Monad.Reader as Reader
 import Data.Array as Array
 import Data.Bounded.Generic as Bounded.Generic
 import Data.Enum (class BoundedEnum, class Enum)
 import Data.Enum as Enum
 import Data.Enum.Generic as Enum.Generic
 import Data.Generic.Rep (class Generic)
-import Data.Lens ((<>~))
-import Data.Lens.Index as Index
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Maybe as Maybe
 import Data.Show.Generic as Show.Generic
-import Data.Traversable (class Traversable)
-import Data.Traversable as Traversable
 import Data.Tuple (Tuple(..))
-import Partial.Unsafe as Unsafe
+import Effect (Effect)
+import Effect.Class.Console as Console
+import Partial.Unsafe as Partial.Unsafe
 import React.Basic.DOM as R
-import React.Basic.DOM.Events as DOM.Events
 import React.Basic.Events as Events
-import React.Basic.Hooks (Component, JSX, (/\))
+import React.Basic.Hooks (type (/\), Hook, JSX, ReactContext, Render, UseContext, UseState, (/\))
 import React.Basic.Hooks as Hooks
-import Web.DOM.Element (className)
+
+type ComponentM env props
+  = ReaderT env Effect (props -> JSX)
+
+component ::
+  forall env props hooks.
+  String -> (props -> Render Unit hooks JSX) -> ComponentM env props
+component name render = ReaderT \_ -> Hooks.component name render
 
 data Rank
   = R1
@@ -108,6 +113,9 @@ derive instance eqSquare :: Eq Square
 
 derive instance ordSquare :: Ord Square
 
+instance showSquare :: Show Square where
+  show (Square { file, rank }) = show file <> show rank
+
 data Piece
   = King
   | Queen
@@ -144,36 +152,38 @@ renderPlayerPiece { player, piece } =
             Knight -> "♞"
             Pawn -> "♟︎"
         ]
+    , draggable: true
     }
 
-renderBoard :: Board -> JSX
-renderBoard =
-  R.div <<< { className: "board", children: _ }
-    <<< map renderRank
-    <<< Array.reverse
-    <$> chunksOf 8
-    <<< Array.reverse
-    <<< Map.toUnfoldable
+mkBoard :: Component Unit
+mkBoard = do
+  gameContext <- Reader.ask
+  rank <- mkRank
+  component "Board" \_ -> Hooks.do
+    { boardState } <- useGameContext gameContext
+    pure do
+      ( R.div <<< { className: "board", children: _ }
+          <<< map rank
+          <<< Array.reverse
+          <$> chunksOf' 8
+          <<< Array.reverse
+          <<< Map.toUnfoldable
+      )
+        boardState
 
-renderRank :: Array (Tuple Square (Maybe PlayerPiece)) -> JSX
-renderRank =
-  R.div <<< { className: "rank", children: _ }
-    <<< map \(Tuple _ piece) ->
-        R.div
-          { className: "square"
-          , children: [ Maybe.maybe mempty renderPlayerPiece piece ]
-          }
-
--- | Completely unnecessary
-chunksOf :: forall a. Int -> Array a -> Array (Array a)
-chunksOf n =
-  flip State.execState [ [] ]
-    <<< Traversable.traverse \x -> do
-        acc <- State.get
-        case Array.length <$> Array.last acc of
-          Just m
-            | m == n -> State.modify (_ `Array.snoc` [ x ])
-          _ -> State.modify (Index.ix (Array.length acc - 1) <>~ [ x ])
+mkRank :: Component (Array (Square /\ Maybe PlayerPiece))
+mkRank =
+  component "Rank" \props ->
+    pure do
+      ( R.div <<< { className: "rank", children: _ }
+          <<< map \(Tuple x piece) ->
+              R.div
+                { className: "square"
+                , children: [ Maybe.maybe mempty renderPlayerPiece piece ]
+                , onDragOver: Events.handler_ (Console.logShow x)
+                }
+      )
+        props
 
 chunksOf' :: forall a. Int -> Array a -> Array (Array a)
 chunksOf' n = go []
@@ -201,7 +211,50 @@ initialBoard = Map.fromFoldable (allSquares `Array.zip` allPieces)
 
   backRank = [ Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook ]
 
-mkApp :: Component Unit
+type GameState
+  = { boardState :: Board
+    , setBoardState :: (Board -> Board) -> Effect Unit
+    , currentPlayer :: Player
+    , switchCurrentPlayer :: Effect Unit
+    }
+
+type GameContext
+  = ReactContext (Maybe GameState)
+
+type Component props
+  = ComponentM GameContext props
+
+mkGameContext :: Effect (GameContext)
+mkGameContext = Hooks.createContext Nothing
+
+useGameContext :: GameContext -> Hook (UseContext (Maybe GameState)) GameState
+useGameContext gameContext = Hooks.do
+  maybeContextValue <- Hooks.useContext gameContext
+  pure case maybeContextValue of
+    Nothing ->
+      Partial.Unsafe.unsafeCrashWith
+        "useContext can only be used in a descendant of \
+        \the corresponding context provider component"
+    Just contextValue -> contextValue
+
+mkApp :: Hooks.Component Unit
 mkApp = do
-  Hooks.component "App" \_ -> Hooks.do
-    pure (renderBoard initialBoard)
+  gameContext <- mkGameContext
+  flip Reader.runReaderT gameContext do
+    board <- mkBoard
+    component "App" \_ -> Hooks.do
+      boardState /\ setBoardState <- Hooks.useState initialBoard
+      currentPlayer /\ switchCurrentPlayer <- useCurrentPlayer
+      pure do
+        Hooks.provider gameContext (Just { boardState, setBoardState, currentPlayer, switchCurrentPlayer })
+          [ board unit ]
+
+useCurrentPlayer :: Hook (UseState Player) (Player /\ Effect Unit)
+useCurrentPlayer = Hooks.do
+  currentPlayer /\ setCurrentPlayer <- Hooks.useState White
+  let
+    switchCurrentPlayer =
+      setCurrentPlayer case _ of
+        White -> Black
+        Black -> White
+  pure (currentPlayer /\ switchCurrentPlayer)
