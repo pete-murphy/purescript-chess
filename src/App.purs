@@ -8,13 +8,19 @@ import Data.Bounded.Generic as Bounded.Generic
 import Data.Enum (class BoundedEnum, class Enum)
 import Data.Enum as Enum
 import Data.Enum.Generic as Enum.Generic
+import Data.Foldable as Foldable
 import Data.Generic.Rep (class Generic)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Maybe as Maybe
+import Data.Monoid as Monoid
+import Data.Set (Set)
+import Data.Set as Set
 import Data.Show.Generic as Show.Generic
 import Data.Tuple (Tuple(..))
+import Debug (class DebugWarning)
+import Debug as Debug
 import Effect (Effect)
 import Effect.Class.Console as Console
 import Partial.Unsafe as Partial.Unsafe
@@ -124,9 +130,19 @@ data Piece
   | Knight
   | Pawn
 
+derive instance genericPiece :: Generic Piece _
+
+instance showPiece :: Show Piece where
+  show = Show.Generic.genericShow
+
 data Player
   = Black
   | White
+
+derive instance genericPlayer :: Generic Player _
+
+instance showPlayer :: Show Player where
+  show = Show.Generic.genericShow
 
 type PlayerPiece
   = { player :: Player
@@ -136,24 +152,40 @@ type PlayerPiece
 type Board
   = Map Square (Maybe PlayerPiece)
 
-renderPlayerPiece :: PlayerPiece -> JSX
-renderPlayerPiece { player, piece } =
-  R.span
-    { className:
-        case player of
-          White -> "white"
-          Black -> "black"
-    , children:
-        [ R.text case piece of
-            King -> "♚"
-            Queen -> "♛"
-            Rook -> "♜"
-            Bishop -> "♝"
-            Knight -> "♞"
-            Pawn -> "♟︎"
-        ]
-    , draggable: true
-    }
+mkPlayerPiece :: Component { playerPiece :: PlayerPiece, square :: Square }
+mkPlayerPiece = do
+  gameContext <- Reader.ask
+  component "PlayerPiece" \({ playerPiece: { player, piece }, square }) -> Hooks.do
+    { setHighlightedSquares, setMovingFrom, movingTo, highlightedSquares, setBoardState } <- useGameContext gameContext
+    pure do
+      R.span
+        { className:
+            case player of
+              White -> "white"
+              Black -> "black"
+        , children:
+            [ R.text case piece of
+                King -> "♚"
+                Queen -> "♛"
+                Rook -> "♜"
+                Bishop -> "♝"
+                Knight -> "♞"
+                Pawn -> "♟︎"
+            ]
+        , draggable: true
+        , onDragStart:
+            Events.handler_ do
+              setHighlightedSquares (validMoves { player, piece } square)
+              setMovingFrom (Just square)
+        , onDragEnd:
+            Events.handler_ do
+              Foldable.for_ movingTo \to_ ->
+                -- EWWWW
+                Monoid.guard (Set.member to_ highlightedSquares)
+                  (Debug.trace (show square) \_ -> setBoardState (movePiece { player, piece } square to_))
+              setHighlightedSquares Set.empty
+              setMovingFrom Nothing
+        }
 
 mkBoard :: Component Unit
 mkBoard = do
@@ -165,32 +197,38 @@ mkBoard = do
       ( R.div <<< { className: "board", children: _ }
           <<< map rank
           <<< Array.reverse
-          <$> chunksOf' 8
+          <$> chunksOf 8
           <<< Array.reverse
           <<< Map.toUnfoldable
       )
         boardState
 
 mkRank :: Component (Array (Square /\ Maybe PlayerPiece))
-mkRank =
-  component "Rank" \props ->
+mkRank = do
+  gameContext <- Reader.ask
+  playerPieceComponent <- mkPlayerPiece
+  component "Rank" \props -> Hooks.do
+    { highlightedSquares, setMovingTo } <- useGameContext gameContext
     pure do
       ( R.div <<< { className: "rank", children: _ }
-          <<< map \(Tuple x piece) ->
+          <<< map \(Tuple square maybePlayerPiece) ->
+              -- Debug.trace (show { highlightedSquares, square }) \_ ->
               R.div
-                { className: "square"
-                , children: [ Maybe.maybe mempty renderPlayerPiece piece ]
-                , onDragOver: Events.handler_ (Console.logShow x)
+                { className: "square" <> Monoid.guard (Set.member square highlightedSquares) " highlighted"
+                , children: [ Maybe.maybe mempty (playerPieceComponent <<< { playerPiece: _, square }) maybePlayerPiece ]
+                , onDragOver:
+                    Events.handler_ do
+                      setMovingTo if Set.member square highlightedSquares then Just square else Nothing
                 }
       )
         props
 
-chunksOf' :: forall a. Int -> Array a -> Array (Array a)
-chunksOf' n = go []
+chunksOf :: forall a. Int -> Array a -> Array (Array a)
+chunksOf n = go []
   where
-  go acc [] = acc
-
-  go acc xs = go (acc <> [ Array.take n xs ]) (Array.drop n xs)
+  go acc = case _ of
+    [] -> acc
+    xs -> go (acc <> [ Array.take n xs ]) (Array.drop n xs)
 
 initialBoard :: Board
 initialBoard = Map.fromFoldable (allSquares `Array.zip` allPieces)
@@ -216,6 +254,12 @@ type GameState
     , setBoardState :: (Board -> Board) -> Effect Unit
     , currentPlayer :: Player
     , switchCurrentPlayer :: Effect Unit
+    , movingFrom :: Maybe Square
+    , setMovingFrom :: Maybe Square -> Effect Unit
+    , movingTo :: Maybe Square
+    , setMovingTo :: Maybe Square -> Effect Unit
+    , highlightedSquares :: Set Square
+    , setHighlightedSquares :: Set Square -> Effect Unit
     }
 
 type GameContext
@@ -245,8 +289,25 @@ mkApp = do
     component "App" \_ -> Hooks.do
       boardState /\ setBoardState <- Hooks.useState initialBoard
       currentPlayer /\ switchCurrentPlayer <- useCurrentPlayer
+      highlightedSquares /\ setHighlightedSquares <- Hooks.useState' Set.empty
+      movingFrom /\ setMovingFrom <- Hooks.useState' Nothing
+      movingTo /\ setMovingTo <- Hooks.useState' Nothing
+      Debug.traceM (show movingTo)
       pure do
-        Hooks.provider gameContext (Just { boardState, setBoardState, currentPlayer, switchCurrentPlayer })
+        Hooks.provider gameContext
+          ( Just
+              { boardState
+              , setBoardState
+              , currentPlayer
+              , switchCurrentPlayer
+              , highlightedSquares
+              , setHighlightedSquares
+              , movingFrom
+              , setMovingFrom
+              , movingTo
+              , setMovingTo
+              }
+          )
           [ board unit ]
 
 useCurrentPlayer :: Hook (UseState Player) (Player /\ Effect Unit)
@@ -258,3 +319,30 @@ useCurrentPlayer = Hooks.do
         White -> Black
         Black -> White
   pure (currentPlayer /\ switchCurrentPlayer)
+
+validMoves :: PlayerPiece -> Square -> Set Square
+validMoves { player, piece } (Square { rank, file }) =
+  Set.fromFoldable case piece of
+    Pawn -> case player, rank of
+      White, R2 ->
+        Array.catMaybes
+          [ Square <<< { file, rank: _ } <$> (Enum.succ >=> Enum.succ) rank
+          , Square <<< { file, rank: _ } <$> Enum.succ rank
+          ]
+      White, _ ->
+        Array.catMaybes
+          [ Square <<< { file, rank: _ } <$> Enum.succ rank
+          ]
+      Black, R7 ->
+        Array.catMaybes
+          [ Square <<< { file, rank: _ } <$> (Enum.pred >=> Enum.pred) rank
+          , Square <<< { file, rank: _ } <$> Enum.pred rank
+          ]
+      Black, _ ->
+        Array.catMaybes
+          [ Square <<< { file, rank: _ } <$> Enum.pred rank
+          ]
+    _ -> []
+
+movePiece :: PlayerPiece -> Square -> Square -> Board -> Board
+movePiece playerPiece from to = Map.union (Map.fromFoldable [ Tuple from Nothing, Tuple to (Just playerPiece) ])

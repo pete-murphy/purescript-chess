@@ -17,6 +17,10 @@
   height: var(--square-size);
 }
 
+.highlighted {
+  background-color: tomato !important;
+}
+
 .rank > .square {
   background-color: lightgray;
 }

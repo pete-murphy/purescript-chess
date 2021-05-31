@@ -6,9 +6,11 @@ You can edit this file as you like.
 , dependencies =
   [ "arrays"
   , "console"
+  , "debug"
   , "effect"
   , "enums"
   , "exceptions"
+  , "filterable"
   , "foldable-traversable"
   , "js-timers"
   , "maybe"
